@@ -1,5 +1,5 @@
 @echo off
-cd /d E:\笔记
+cd /d "E:\笔记"
 git add .
-git commit -m "C++"
+git commit -m "无"
 git push
