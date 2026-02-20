@@ -2,86 +2,113 @@ import os
 import sys
 import time
 import requests
-from github import Github, GithubException
+from github import Github, Auth
 
 # ================= 配置 =================
-# 1. 从环境变量获取敏感信息 (GitHub Actions 会自动注入这些变量)
-# 注意：如果在本地运行，需要你自己手动设置这些环境变量，或者暂时改回写死的方式
 GH_TOKEN = os.environ.get("GH_TOKEN")
 XMIND_COOKIE = os.environ.get("XMIND_COOKIE")
-REPO_NAME = os.environ.get("GITHUB_REPOSITORY") # GitHub Actions 会自动提供 "用户名/仓库名"
+XMIND_FWT = os.environ.get("XMIND_FWT") # 新增：必须的环境变量
+REPO_NAME = os.environ.get("GITHUB_REPOSITORY")
 
-# 2. 其他配置
-XMIND_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Cookie": XMIND_COOKIE
-}
-XMIND_LIST_API = "https://xmind.works/api/v2/files?limit=1000"
-BACKUP_DIR = "xmind_backup/"  # 备份到仓库的哪个目录
+# XMind 国内版 API
+XMIND_LIST_API = "https://app.xmind.cn/api/drive/list-folder"
+BACKUP_DIR = "xmind_backup/"
 
 def main():
-    # 检查环境变量是否存在
-    if not GH_TOKEN or not XMIND_COOKIE:
-        print("❌ 错误: 缺少环境变量 GH_TOKEN 或 XMIND_COOKIE")
+    if not GH_TOKEN or not XMIND_COOKIE or not XMIND_FWT:
+        print("❌ 错误: 缺少环境变量 GH_TOKEN, XMIND_COOKIE 或 XMIND_FWT")
         sys.exit(1)
         
     print(f"🚀 启动备份任务，仓库: {REPO_NAME}")
 
-    # 1. 连接 GitHub
-    g = Github(GH_TOKEN)
+    # 1. 连接 GitHub (修复了之前的 DeprecationWarning)
+    auth = Auth.Token(GH_TOKEN)
+    g = Github(auth=auth)
     repo = g.get_repo(REPO_NAME)
 
-    # 2. 获取 XMind 文件列表
-    print("☁️ 正在获取 XMind 云端列表...")
+    # 2. 准备国内版的请求头和载荷(Payload)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "Cookie": XMIND_COOKIE,
+        "fwt": XMIND_FWT  # 核心身份令牌
+    }
+    
+    # 你刚才抓到的载荷数据
+    payload = {
+        "folderId": "_xmind_CfoeIoGlZY",
+        "limit": 100,
+        "order": "desc",
+        "sortBy": "modifiedTime",
+        "teamOrMyWorksId": "_xmind_CfoeIoGlZY",
+        "type": "file"
+    }
+
+    # 3. 获取文件列表 (改用 POST 请求)
+    print("☁️ 正在请求 XMind 国内版接口...")
     try:
-        resp = requests.get(XMIND_LIST_API, headers=XMIND_HEADERS)
+        resp = requests.post(XMIND_LIST_API, headers=headers, json=payload)
         resp.raise_for_status()
-        files = resp.json()
-        # 兼容处理：如果返回的是字典且包含 items
-        if isinstance(files, dict) and 'items' in files:
-            files = files['items']
+        data = resp.json()
+        
+        # 提取文件列表，兼容不同的数据结构
+        files = []
+        if isinstance(data, list):
+            files = data
+        elif isinstance(data, dict):
+            files = data.get('data', {}).get('files', []) if 'files' in str(data) else data.get('items', [])
+            if not files and 'data' in data and isinstance(data['data'], list):
+                files = data['data']
+                
     except Exception as e:
         print(f"❌ 获取列表失败: {e}")
+        print(f"服务器返回: {resp.text if 'resp' in locals() else '未知'}")
         sys.exit(1)
 
-    print(f"✅ 找到 {len(files)} 个文件")
+    print(f"✅ 找到 {len(files)} 个文件/文件夹")
 
-    # 3. 遍历下载并上传
+    # 4. 遍历下载并上传
     for idx, item in enumerate(files):
+        # 如果是文件夹则跳过（type 通常为 folder 或 file）
+        if item.get('type') == 'folder':
+            continue
+            
         name = item.get('name', f'untitled_{idx}')
-        if not name.endswith('.xmind'): name += '.xmind'
-        
-        # 获取下载链接
+        if not name.endswith('.xmind'): 
+            name += '.xmind'
+            
         file_id = item.get('id')
-        # 优先用 API 返回的 url，没有则尝试拼接
-        download_url = item.get('downloadUrl') or f"https://xmind.works/api/v2/files/{file_id}/download"
-        
         print(f"⬇️ [{idx+1}/{len(files)}] 下载: {name}")
         
-        try:
-            # 下载内容
-            content = requests.get(download_url, headers=XMIND_HEADERS).content
+        # 尝试国内版可能的下载链接格式
+        download_url = item.get('downloadUrl')
+        if not download_url:
+            download_url = f"https://app.xmind.cn/api/drive/file/{file_id}/download"
             
-            # 上传到 GitHub
+        try:
+            down_resp = requests.get(download_url, headers=headers)
+            if down_resp.status_code != 200:
+                print(f"   └── ❌ 下载失败 (状态码: {down_resp.status_code})")
+                continue
+                
+            content = down_resp.content
             file_path = f"{BACKUP_DIR}{name}"
             
             try:
-                # 尝试获取现有文件 hash (为了更新)
                 contents = repo.get_contents(file_path)
                 repo.update_file(contents.path, f"Update {name}", content, contents.sha)
                 print(f"   └── ✅ 更新成功")
-            except GithubException as e:
-                if e.status == 404:
-                    # 文件不存在，新建
+            except Exception as e:
+                if getattr(e, 'status', 0) == 404:
                     repo.create_file(file_path, f"Add {name}", content)
                     print(f"   └── ✨ 新建成功")
                 else:
-                    raise e
+                    print(f"   └── ⚠️ GitHub 同步错误: {e}")
                     
         except Exception as e:
             print(f"   └── ⚠️ 失败: {e}")
         
-        # 稍微歇息，防止被 XMind 封 IP
         time.sleep(2)
 
 if __name__ == "__main__":
