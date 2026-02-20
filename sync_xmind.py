@@ -24,15 +24,16 @@ def main():
     g = Github(auth=auth)
     repo = g.get_repo(REPO_NAME)
 
-    # 🛡️ 核心修复 1：补全防盗链和身份特征 Headers，完美伪装成浏览器
+    # 🛡️ 终极伪装：还原你真实浏览器的所有特征指纹
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36 Edg/145.0.0.0",
         "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json",
         "Cookie": XMIND_COOKIE,
         "fwt": XMIND_FWT,
         "Referer": "https://app.xmind.cn/home/my-works",
-        "x-app-identity": "flatwhite"
+        "x-app-identity": "flatwhite",
+        "x-fingerprint": "b86deb6403d04ab988502a7726a0f36e" # 补全你的设备指纹
     }
     
     payload = {
@@ -72,14 +73,18 @@ def main():
         print(f"⬇️ [{idx+1}/{len(files)}] 下载: {name}")
         
         download_url = f"https://app.xmind.cn/api/drive/file/{file_id}/download"
+        
+        # 专门为下载准备的 Headers (模拟真实点击下载)
+        dl_headers = headers.copy()
+        dl_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+        if "Content-Type" in dl_headers:
+            del dl_headers["Content-Type"]
             
         try:
-            # 请求下载接口
-            link_resp = requests.get(download_url, headers=headers, allow_redirects=False)
+            link_resp = requests.get(download_url, headers=dl_headers, allow_redirects=False)
             
             down_resp = None
             
-            # 🛡️ 核心修复 2：智能处理服务器的各种放行方式
             if link_resp.status_code == 200:
                 if "application/json" in link_resp.headers.get("Content-Type", ""):
                     res_data = link_resp.json()
@@ -87,7 +92,7 @@ def main():
                     if real_url:
                         down_resp = requests.get(real_url)
                     else:
-                        print(f"   └── ❌ JSON 中找不到下载链接: {res_data}")
+                        print(f"   └── ❌ JSON 中找不到下载链接")
                         continue
                 else:
                     down_resp = link_resp
@@ -97,12 +102,11 @@ def main():
                 down_resp = requests.get(real_url)
                 
             else:
-                print(f"   └── ❌ 获取链接失败 (状态码: {link_resp.status_code}, 服务器原话: {link_resp.text[:100]})")
+                print(f"   └── ❌ 获取链接失败 (状态码: {link_resp.status_code}, 详情: {link_resp.text[:50]})")
                 continue
                 
             if not down_resp or down_resp.status_code != 200:
-                status = down_resp.status_code if down_resp else 'Unknown'
-                print(f"   └── ❌ 文件下载失败 (状态码: {status})")
+                print(f"   └── ❌ 文件下载失败")
                 continue
                 
             content = down_resp.content
