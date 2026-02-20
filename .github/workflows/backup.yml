@@ -1,0 +1,37 @@
+name: Auto XMind Backup
+
+# 触发条件
+on:
+  schedule:
+    # 每天北京时间凌晨 4 点运行 (UTC 时间 20:00)
+    # 分 时 日 月 周
+    - cron: '0 20 * * *'
+  # 允许你手动点击按钮触发 (方便测试)
+  workflow_dispatch:
+
+jobs:
+  backup_job:
+    runs-on: ubuntu-latest  # 使用最新的 Ubuntu 虚拟机
+
+    steps:
+      # 1. 拉取你的代码仓库
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2. 安装 Python 环境
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      # 3. 安装依赖库
+      - name: Install dependencies
+        run: |
+          pip install requests PyGithub
+
+      # 4. 运行备份脚本 (注入环境变量)
+      - name: Run backup script
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}      # 读取你刚才配的 Secret
+          XMIND_COOKIE: ${{ secrets.XMIND_COOKIE }} # 读取你刚才配的 Secret
+        run: python sync_xmind.py
