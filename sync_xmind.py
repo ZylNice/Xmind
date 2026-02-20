@@ -80,33 +80,26 @@ def main():
             down_resp = None
             
             # 🛡️ 核心修复 2：智能处理服务器的各种放行方式
-            # 情况 A：服务器直接返回了 200 OK
             if link_resp.status_code == 200:
-                # 如果返回的是 JSON，说明真实的阿里云链接在里面
                 if "application/json" in link_resp.headers.get("Content-Type", ""):
                     res_data = link_resp.json()
                     real_url = res_data.get('url') or res_data.get('data', {}).get('url') or res_data.get('downloadUrl')
                     if real_url:
-                        # 用纯净的请求（不带 XMind 标头）去阿里云下载文件
                         down_resp = requests.get(real_url)
                     else:
                         print(f"   └── ❌ JSON 中找不到下载链接: {res_data}")
                         continue
                 else:
-                    # 如果不是 JSON，说明直接给了文件流
                     down_resp = link_resp
                     
-            # 情况 B：服务器返回重定向 (302)
             elif link_resp.status_code in [301, 302, 303, 307, 308]:
                 real_url = link_resp.headers.get('Location')
                 down_resp = requests.get(real_url)
                 
-            # 情况 C：还是被拒绝，打印出真实原因！
             else:
                 print(f"   └── ❌ 获取链接失败 (状态码: {link_resp.status_code}, 服务器原话: {link_resp.text[:100]})")
                 continue
                 
-            # 检查最终文件是否下载成功
             if not down_resp or down_resp.status_code != 200:
                 status = down_resp.status_code if down_resp else 'Unknown'
                 print(f"   └── ❌ 文件下载失败 (状态码: {status})")
@@ -121,4 +114,15 @@ def main():
                 print(f"   └── ✅ 更新成功")
             except Exception as e:
                 if getattr(e, 'status', 0) == 404:
-                    repo
+                    repo.create_file(file_path, f"Add {name}", content)
+                    print(f"   └── ✨ 新建成功")
+                else:
+                    print(f"   └── ⚠️ GitHub 同步错误: {e}")
+                    
+        except Exception as e:
+            print(f"   └── ⚠️ 失败: {e}")
+        
+        time.sleep(2)
+
+if __name__ == "__main__":
+    main()
