@@ -24,12 +24,15 @@ def main():
     g = Github(auth=auth)
     repo = g.get_repo(REPO_NAME)
 
+    # 🛡️ 核心修复 1：补全防盗链和身份特征 Headers，完美伪装成浏览器
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json, text/plain, */*",
         "Content-Type": "application/json",
         "Cookie": XMIND_COOKIE,
-        "fwt": XMIND_FWT
+        "fwt": XMIND_FWT,
+        "Referer": "https://app.xmind.cn/home/my-works",
+        "x-app-identity": "flatwhite"
     }
     
     payload = {
@@ -71,22 +74,42 @@ def main():
         download_url = f"https://app.xmind.cn/api/drive/file/{file_id}/download"
             
         try:
-            # 关键修复 1：禁止自动重定向，先抓取真实的云存储链接
+            # 请求下载接口
             link_resp = requests.get(download_url, headers=headers, allow_redirects=False)
             
-            # 如果服务器返回重定向 (302/301 等)
-            if link_resp.status_code in [301, 302, 303, 307, 308]:
+            down_resp = None
+            
+            # 🛡️ 核心修复 2：智能处理服务器的各种放行方式
+            # 情况 A：服务器直接返回了 200 OK
+            if link_resp.status_code == 200:
+                # 如果返回的是 JSON，说明真实的阿里云链接在里面
+                if "application/json" in link_resp.headers.get("Content-Type", ""):
+                    res_data = link_resp.json()
+                    real_url = res_data.get('url') or res_data.get('data', {}).get('url') or res_data.get('downloadUrl')
+                    if real_url:
+                        # 用纯净的请求（不带 XMind 标头）去阿里云下载文件
+                        down_resp = requests.get(real_url)
+                    else:
+                        print(f"   └── ❌ JSON 中找不到下载链接: {res_data}")
+                        continue
+                else:
+                    # 如果不是 JSON，说明直接给了文件流
+                    down_resp = link_resp
+                    
+            # 情况 B：服务器返回重定向 (302)
+            elif link_resp.status_code in [301, 302, 303, 307, 308]:
                 real_url = link_resp.headers.get('Location')
-                # 关键修复 2：用干净的请求（不带 XMind 的 header）去下载，完美避开 403
                 down_resp = requests.get(real_url)
-            elif link_resp.status_code == 200:
-                down_resp = link_resp
+                
+            # 情况 C：还是被拒绝，打印出真实原因！
             else:
-                print(f"   └── ❌ 获取链接失败 (状态码: {link_resp.status_code})")
+                print(f"   └── ❌ 获取链接失败 (状态码: {link_resp.status_code}, 服务器原话: {link_resp.text[:100]})")
                 continue
                 
-            if down_resp.status_code != 200:
-                print(f"   └── ❌ 下载失败 (状态码: {down_resp.status_code})")
+            # 检查最终文件是否下载成功
+            if not down_resp or down_resp.status_code != 200:
+                status = down_resp.status_code if down_resp else 'Unknown'
+                print(f"   └── ❌ 文件下载失败 (状态码: {status})")
                 continue
                 
             content = down_resp.content
@@ -98,15 +121,4 @@ def main():
                 print(f"   └── ✅ 更新成功")
             except Exception as e:
                 if getattr(e, 'status', 0) == 404:
-                    repo.create_file(file_path, f"Add {name}", content)
-                    print(f"   └── ✨ 新建成功")
-                else:
-                    print(f"   └── ⚠️ GitHub 同步错误: {e}")
-                    
-        except Exception as e:
-            print(f"   └── ⚠️ 失败: {e}")
-        
-        time.sleep(2)
-
-if __name__ == "__main__":
-    main()
+                    repo
