@@ -32,6 +32,7 @@ jobs:
       # 4. 运行备份脚本 (注入环境变量)
       - name: Run backup script
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}      # 读取你刚才配的 Secret
-          XMIND_COOKIE: ${{ secrets.XMIND_COOKIE }} # 读取你刚才配的 Secret
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          XMIND_COOKIE: ${{ secrets.XMIND_COOKIE }}
+          XMIND_FWT: ${{ secrets.XMIND_FWT }} # 👇 新加这一行
         run: python sync_xmind.py
